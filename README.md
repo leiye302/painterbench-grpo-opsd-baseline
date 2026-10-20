@@ -26,6 +26,65 @@ Validation boundaries:
 Read [related implementations and reward evidence](docs/RELATED_GRPO.md) before
 interpreting the score. The baseline is not an official PainterBench RL recipe.
 
+## Which benchmark and evaluation protocol?
+
+**Benchmark: [PainterBench](https://arxiv.org/abs/2609.34195)**, using its
+[public native environment and stimuli](https://huggingface.co/datasets/painterbench/painterbench/tree/4531f85129c8e40de99981e7602d0e53b9d7c593/painterbench).
+This is **not VAGEN-SVG**, text-to-image prompt following, or reconstruction of
+a reference image. VAGEN/VERL supplies the public GRPO loss, not this benchmark.
+
+The Actor observes a starting shape on a 400-by-400 canvas, reasons, calls the
+native drawing tools, observes the updated canvas and continues until it
+finishes or reaches the rollout limit. The task is to create an original
+drawing incorporating the starting stimulus.
+
+| Item | Exact default protocol |
+| --- | --- |
+| Public task bank | All 30 official stimuli: 20 incomplete shapes (`is01`–`is20`) and 10 object transformations (`ot01`–`ot10`) |
+| Actor training tasks | 24 stimuli: the 30-task bank excluding the six held-out IDs below |
+| Actor held-out tasks | `is03,is12,is13,is16,ot02,ot03` (4 incomplete shapes + 2 object transformations) |
+| Split construction | Fixed per-type SHA-256 ordering in [`split_stimuli()`](painter_rl/environment.py); not sampled anew for each run |
+| Evaluation schedule | Before training and every 10 updates, including update 50 |
+| Samples per evaluation | 2 fixed-seed trajectories per held-out task: 12 final canvases total |
+| Sampling / budget | Temperature 1, top-p 1, top-k 0; at most 64 turns, 16,384 new tokens per turn, 32,768 context tokens |
+| Reported scalar | Mean official **ViDrA-adapted** prediction over the 12 actual final canvases; higher predicted creativity is better |
+| Incomplete / failed-tool episodes | Score the last actual canvas too; never drop a trajectory just because it did not finish |
+| Additional records | Per-trajectory score, completion flag, tool errors, reasoning-turn count, full trajectory and final canvas |
+
+The **24/6 split is this repository's fixed RL protocol**, not an official
+PainterBench train/test split or the paper's full benchmark result. Base-model
+and trained-model evaluations use the same six tasks, seeds and budgets.
+The mean reward is a predicted creativity score, **not success rate or action
+accuracy**, and is not DINO/DreamSim similarity to a target image. DINOv2 is the
+feature backbone inside the released reward predictor.
+
+The separate **480-image human-rated scorer test** below checks the frozen
+reward implementation. Those images are neither the Actor's 24 training tasks
+nor its 12 generated evaluation canvases. Held-out Actor tasks also do not
+imply that the public reward model never saw those stimuli.
+
+## Public resources only — no developer-machine dependency
+
+A fresh checkout does **not** need an earlier experiment folder, collected
+trajectories, SFT annotations, a private checkpoint, an Analyzer, or an API key.
+It generates RL trajectories online from the public starting stimuli.
+
+| Required resource | Public source / version | How the setup obtains it |
+| --- | --- | --- |
+| Actor weights, tokenizer and processor | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B/tree/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a) | `scripts/prepare.py --model-dir models/Qwen3.5-4B` |
+| Environment, canvas, tools, task prompts and 30 stimuli | Pinned public PainterBench release linked above | `scripts/prepare.py --work work` |
+| Unchanged GRPO and SDAR loss functions | Public VERL and SDAR commits pinned in [`sources.lock.json`](sources.lock.json) | The same `scripts/prepare.py` command |
+| ViDrA-adapted head, feature code and DINOv2 backbone | Public PainterBench / Meta assets with fixed SHA-256 values | `scripts/reward_probe.py --work work/reward --prepare-only` |
+| Teacher's static drawing skill | [`configs/static_drawing_skill.txt`](configs/static_drawing_skill.txt), included in this repository | No download or external service |
+| Optional 480-image reward-validation data | Public PainterBench human-rating tables and images | `scripts/validate_reward.py` |
+
+All revisions and asset locations are recorded in `sources.lock.json`;
+preparation verifies pinned source/asset hashes and writes receipts. `models/`,
+`work/`, `runs/` and `checkpoints/` in the commands below are directories created
+on **the reader's own machine**. They are not paths to an existing private
+installation. Internet access is required for first-time public downloads;
+offline execution requires explicitly copying those prepared public assets.
+
 ## Standalone GPU setup
 
 The reference runtime uses Linux, Python **3.12**, a CUDA-13-compatible driver,
@@ -130,14 +189,26 @@ Do not rename a checkpoint to a later update. Partial directories are never
 resumed. A crash during rollout repeats that update from the previous complete
 checkpoint and its recorded seed; failed-attempt evidence remains separate.
 
-Standalone evaluation of either the base or an exported checkpoint:
+Standalone evaluation of the base and the trained checkpoint on the **same**
+held-out tasks, seeds and budgets (use a fresh output directory for each):
 
 ```bash
+python scripts/evaluate.py \
+  --model models/Qwen3.5-4B \
+  --work work --reward-work work/reward \
+  --output runs/eval-base --config configs/baseline.json
+
 python scripts/evaluate.py \
   --model checkpoints/baseline/update_0050/model \
   --work work --reward-work work/reward \
   --output runs/eval-final --config configs/baseline.json
 ```
+
+Read `runs/eval-base/evaluation.json` and
+`runs/eval-final/evaluation.json`: `mean_reward` is the aggregate score, `n`
+must be 12 with the default configuration, and `records` contains the
+per-trajectory measurements. The saved canvases permit independent visual
+review; a gain in the optimized reward alone is not a human-quality result.
 
 ## Why the reward is checked first
 
@@ -235,6 +306,7 @@ This preserves the public loss calculation. Environment transport, native-token
 parsing, checkpoint storage and the Transformers runtime are adapters maintained
 here, not unmodified upstream end-to-end training code.
 
-No secret, user-specific server, private corpus, local model path or private
-checkpoint is required by the published audit commands. See [NOTICE.md](NOTICE.md)
-for provenance and third-party licenses.
+No secret, user-specific server, private corpus, developer-local model path or
+private checkpoint is required by the published preparation, training or
+evaluation commands. See [NOTICE.md](NOTICE.md) for provenance and third-party
+licenses.
