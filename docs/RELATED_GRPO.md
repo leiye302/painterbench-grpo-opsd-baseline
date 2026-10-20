@@ -62,3 +62,49 @@ independent blinded creativity/recognizability judgements as well as this
 training score. A rising optimized score alone is insufficient evidence of
 better drawing. No paid judge, secret API, arbitrary target image, or private
 annotation corpus is needed to run the baseline.
+
+## Real-model integration check
+
+Runtime source commit `a053e8f` was exported with `git archive` into a clean
+directory containing only the public allowlist. Prepared public caches were
+provided explicitly by the documented command-line arguments, because the
+GPU host could not reach Hugging Face. No private trajectory collection or
+private helper module was used by that runtime.
+
+Test setup: Qwen3.5-4B (4,539,265,536 loaded parameters), one RTX 6000D with
+approximately 84 GiB addressable VRAM, Python 3.12, Torch 2.13.0+cu130,
+Transformers 5.19.0, FP32 compute and Adam, two trajectories from `is01`, two
+turns per trajectory, one update. All 11 loaded base/tokenizer/processor files
+matched the pinned official revision's Git/LFS identifiers.
+
+| Check | Observed |
+| --- | ---: |
+| CPU contracts in clean source directory | 16 passed |
+| Generated tokens participating in the update | 1,189 |
+| Final-canvas rewards | 0.189660 / 0.244897 |
+| Group advantages | -0.707089 / +0.707089 |
+| Maximum cached-sampling vs full-forward log-prob difference | 0.00007081 |
+| Gradient norm before clipping | 16.725588, finite |
+| Measured maximum parameter-probe change | 0.00000100024 |
+| Full checkpoint bytes, model + optimizer/RNG + metadata | 54,492,002,358 |
+| Fresh-process restored optimizer step | 1 |
+| Restored vs pre-save token-score difference | 0.0 |
+| Drawing calls using restored weights | 2, both changed the canvas |
+
+Both initial trajectories were stopped by the two-turn **smoke budget**. Their
+scores are not complete-drawing benchmark results. The saved checkpoint was
+on temporary shared memory solely to exercise serialization/restoration; real
+training must use persistent storage. Checksums and verification receipts were
+retained separately.
+
+Two bugs/risks were caught before release: BF16 cached/full-forward differences
+were resolved by the tested FP32 path; native chat EOS was added explicitly.
+The pinned public model revision does not ship `generation_config.json`, and
+its text-config EOS differs from the tokenizer's `<|im_end|>`. Falling back to
+the former alone can generate fictitious subsequent user turns. The current
+sampler stops at either legitimate EOS without stopping prematurely at a
+tool-call closing tag.
+
+This check establishes executable data/gradient/checkpoint wiring. It does not
+establish maximum-context feasibility, convergence, creativity improvement,
+cross-stimulus generalization, or superiority of one GRPO variant.

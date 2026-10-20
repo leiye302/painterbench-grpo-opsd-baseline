@@ -16,7 +16,7 @@
     "feature_module_sha256": "6872e34fcd437c8013ad2ea51a120c076cb4076d2bec446a9d5f4114658d208b",
     "validation_report": "vidra/creativity_scorer_adapted/report_adapted.json",
     "validation_report_sha256": "2bfc247c99553234d2834fcd42ba8ccb05deed59ecf7146d687960476d2b0436",
-    "status": "candidate_not_approved_for_rl"
+    "status": "passive_test_verified_optimization_not_certified"
   },
   "dinov2": {
     "repository": "https://github.com/facebookresearch/dinov2.git",

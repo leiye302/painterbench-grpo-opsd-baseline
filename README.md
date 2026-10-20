@@ -1,7 +1,8 @@
 # PainterBench GRPO + OPSD baseline
 
-**Status: native training adapter implemented; final GPU checkpoint/restore
-verification is being completed. No long-run learning result is claimed.**
+**Status: real Qwen3.5-4B GPU integration verified, including an optimizer update,
+full checkpoint and fresh-process restoration. No long-run learning result is
+claimed.** The 50-update configuration is provided, not already reproduced.
 
 This project prepares a Qwen3.5-4B baseline for PainterBench's native multi-turn
 drawing tools. GRPO uses the pinned public VAGEN/VERL loss functions; gated OPSD
@@ -18,7 +19,7 @@ Validation boundaries:
 | Public example images for standalone scoring | Downloadable from pinned public dataset |
 | Qwen3.5 native multimodal training / rollout adapter | Implemented, single process; no stale rollout server |
 | GPU rollout, reward, backward and optimizer update | Real Qwen3.5-4B integration test completed |
-| Full checkpoint and fresh-process restart | Final verification pending |
+| Full checkpoint and fresh-process restart | SHA-verified; restored token scores exactly match; native drawing executes |
 | Reward's 480-image human-rated test split | Live re-score matches released results; correlation 0.8459 |
 | 50-update training / improved drawing quality | Not demonstrated; do not infer from a smoke test |
 

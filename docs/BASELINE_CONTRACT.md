@@ -1,4 +1,4 @@
-# Baseline contract — preparation, not a reproduced result
+# Baseline contract — integration verified, not a reproduced learning result
 
 ## Source boundary
 
@@ -152,7 +152,7 @@ An Actor train/held-out stimulus split is **not** proof that the public reward
 model never saw those stimuli. The public adapted head's training corpus and
 split must be disclosed separately.
 
-## What still requires a real end-to-end test
+## End-to-end validation boundary
 
 The pure-loss tests establish grouping, mask and gradient contracts only.
 They do not validate Qwen3.5 multimodal training compatibility, causal token
@@ -167,4 +167,7 @@ Before a long run, require a small real test covering:
 4. Finite backward and optimizer update on the intended trainable parameters.
 5. New weights used by rollout, plus a complete checkpoint and resume test.
 
-Do not label this baseline “training-ready” until all five are recorded.
+All five have been exercised in the short GPU integration check described in
+[RELATED_GRPO.md](RELATED_GRPO.md#real-model-integration-check). This does not
+establish memory at the maximum context, long-run reward robustness or a
+50-update improvement over the base model.

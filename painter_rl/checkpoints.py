@@ -36,6 +36,15 @@ def save_checkpoint(directory, model, processor, optimizer, update, contract):
         if p.is_file():
             with p.open("rb+") as handle:
                 os.fsync(handle.fileno())
+    if os.name == "posix":
+        directories = sorted((p for p in partial.rglob("*") if p.is_dir()),
+                             key=lambda p: len(p.parts), reverse=True) + [partial]
+        for p in directories:
+            fd = os.open(p, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
     os.replace(partial, directory)
     if os.name == "posix":
         fd = os.open(directory.parent, os.O_RDONLY | os.O_DIRECTORY)
