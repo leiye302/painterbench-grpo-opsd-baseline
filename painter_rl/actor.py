@@ -3,8 +3,10 @@
 Transformers performs native multimodal sampling and forward/backward. Public
 GRPO/SDAR objectives remain in public_losses.py. Nothing trains image pixels.
 """
+import base64
 import copy
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 
 import torch
@@ -21,6 +23,61 @@ class Turn:
     teacher: torch.Tensor | None = None
     reference: torch.Tensor | None = None
     advantage: float = 0.
+
+
+def save_turn_audit(directory, index, messages, inputs, teacher_inputs,
+                    response, sampled_log_probs):
+    """Keep compact, replayable evidence, not expanded image-input tensors.
+
+    The exact training tensors remain in the in-memory Turn until the update
+    finishes. PNGs are lossless and content-addressed within the trajectory.
+    Tensor hashes let a later reconstruction check processor equivalence.
+    """
+    from scripts.reward_probe import atomic_json
+    directory = Path(directory)
+    recorded = copy.deepcopy(messages)
+    for message in recorded:
+        if not isinstance(message.get("content"), list):
+            continue
+        for i, item in enumerate(message["content"]):
+            if item.get("type") != "image_url":
+                continue
+            url = item["image_url"]["url"]
+            prefix = "data:image/png;base64,"
+            if not url.startswith(prefix):
+                raise ValueError("Audit images must be native inline PNGs")
+            raw = base64.b64decode(url[len(prefix):], validate=True)
+            digest = hashlib.sha256(raw).hexdigest()
+            name = f"observed_images/{digest}.png"
+            path = directory / name
+            path.parent.mkdir(exist_ok=True)
+            if path.exists():
+                if path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+                    raise ValueError("Observed image cache changed")
+            else:
+                with path.open("xb") as handle:
+                    handle.write(raw)
+            message["content"][i] = {"type": "image_file", "path": name, "sha256": digest}
+
+    def describe(values):
+        records = {}
+        for name, value in values.items():
+            value = value.detach().cpu().contiguous()
+            raw = value.reshape(-1).view(torch.uint8).numpy().tobytes()
+            item = {"dtype": str(value.dtype), "shape": list(value.shape),
+                    "sha256": hashlib.sha256(raw).hexdigest()}
+            if not name.startswith("pixel_values"):
+                item["values"] = value.tolist()
+            records[name] = item
+        return records
+
+    atomic_json(directory / f"turn_{index:03d}.json", {
+        "format_version": 1, "expanded_image_tensors_saved": False,
+        "messages": recorded, "inputs": describe(inputs),
+        "teacher_inputs": describe(teacher_inputs),
+        "response_token_ids": response.tolist(),
+        "sampled_log_probs": sampled_log_probs.tolist(),
+    })
 
 
 class CaptureSampleLogProbs:
@@ -150,6 +207,11 @@ class QwenActor:
         from scripts.reward_probe import atomic_json
         device = next(self.model.parameters()).device
         episode = DrawingEpisode(directory, stimulus, self.config["max_new_tokens"])
+        atomic_json(Path(directory) / "rollout_config.json", {
+            "stimulus": stimulus, "seed": seed, "greedy": greedy,
+            "config": self.config, "tools": episode.tools,
+            "teacher_skill": self.skill,
+        })
         turns, reason = [], "turn_limit"
         devices = [device.index or 0] if device.type == "cuda" else []
         with torch.random.fork_rng(devices=devices):
@@ -161,10 +223,8 @@ class QwenActor:
                 response, sampled, text = self.generate(inputs, greedy)
                 turn = Turn(inputs, teacher_inputs, response, sampled)
                 turns.append(turn)
-                # Inputs include exact pixels and IDs; no reconstruction during training.
-                torch.save({"inputs": inputs, "teacher_inputs": teacher_inputs,
-                            "response": response, "sampled_log_probs": sampled},
-                           Path(directory) / f"turn_{i:03d}.pt")
+                # Training still uses the exact in-memory tensors, not a reconstruction.
+                save_turn_audit(directory, i, messages, inputs, teacher_inputs, response, sampled)
                 terminal = episode.step(text)
                 atomic_json(Path(directory) / "progress.json",
                             {"turn": i + 1, "response_tokens": response.numel(),

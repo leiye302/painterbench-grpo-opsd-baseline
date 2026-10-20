@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from painter_rl.actor import QwenActor, score_tokens
-from painter_rl.checkpoints import save_checkpoint, verify_checkpoint, restore_optimizer
+from painter_rl.checkpoints import save_checkpoint, verify_checkpoint, restore_optimizer, prune_checkpoints
 from painter_rl.environment import split_stimuli
 from painter_rl.public_losses import PublicLosses
 from painter_rl.rewards import ViDrAReward
@@ -35,7 +35,7 @@ def validate_config(config):
         raise ValueError(f"Unknown/missing config keys: {set(config) ^ required}")
     for name in ("updates", "groups_per_update", "max_turns", "max_new_tokens",
                  "max_context", "ppo_epochs", "save_every", "eval_every",
-                 "eval_replicas", "logit_chunk_size"):
+                 "eval_replicas", "logit_chunk_size", "keep_last_checkpoints"):
         if type(config[name]) is not int or config[name] < 1:
             raise ValueError(f"Invalid {name}")
     if config["group_size"] < 2 or config["max_new_tokens"] >= config["max_context"]:
@@ -46,6 +46,8 @@ def validate_config(config):
         raise ValueError("The validated sampler/score path uses FP32; BF16 requires a separate parity audit")
     if config["learning_rate"] <= 0 or config["grad_clip"] <= 0:
         raise ValueError("Invalid optimizer configuration")
+    if config["keep_last_checkpoints"] < 2:
+        raise ValueError("Keep at least two complete checkpoints")
 
 
 def base_manifest(path):
@@ -257,13 +259,17 @@ def train(args):
                 expected = score_tokens(model, probe.inputs, probe.response,
                                         config["logit_chunk_size"],
                                         compute_dtype=config["compute_dtype"])[0].cpu()
-            torch.save({"inputs": probe.inputs, "response": probe.response,
-                        "expected": expected}, args.output / "restore_probe.pt")
             destination = args.checkpoints / f"update_{update+1:04d}"
-            save_checkpoint(destination, model, processor, optimizer, update+1, contract)
+            save_checkpoint(destination, model, processor, optimizer, update+1, contract,
+                            restore_probe={"inputs": probe.inputs, "response": probe.response,
+                                           "expected": expected})
             atomic_json(args.output / f"checkpoint_{update+1:04d}.json",
                         {"path": str(destination), "complete": True})
+            retention = prune_checkpoints(args.checkpoints, contract,
+                                          config["keep_last_checkpoints"])
+            atomic_json(args.output / f"retention_{update+1:04d}.json", retention)
             print(json.dumps({"stage": "checkpoint_complete", "update": update+1}), flush=True)
+            print(json.dumps({"stage": "checkpoint_retention", **retention}), flush=True)
         if (update+1) % config["eval_every"] == 0 or (update+1 == config["updates"] and not args.skip_final_eval):
             evaluate(actor, reward, args.output / f"eval_{update+1:04d}", val_tasks,
                      config["eval_replicas"], config["seed"]+9_000_000)

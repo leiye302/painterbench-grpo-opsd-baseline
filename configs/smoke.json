@@ -18,6 +18,7 @@
   "ref_kl_coef": 0.01,
   "entropy_coef": 0.001,
   "save_every": 1,
+  "keep_last_checkpoints": 2,
   "eval_every": 10,
   "eval_replicas": 1,
   "logit_chunk_size": 32

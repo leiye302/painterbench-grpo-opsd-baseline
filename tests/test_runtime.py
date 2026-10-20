@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,8 +9,10 @@ import unittest
 
 import torch
 
-from painter_rl.actor import CaptureSampleLogProbs, extend_inputs, score_tokens, native_eos_ids
-from painter_rl.checkpoints import save_checkpoint, verify_checkpoint, restore_optimizer
+from painter_rl.actor import (
+    CaptureSampleLogProbs, extend_inputs, score_tokens, native_eos_ids, save_turn_audit,
+)
+from painter_rl.checkpoints import save_checkpoint, verify_checkpoint, restore_optimizer, prune_checkpoints
 from painter_rl.environment import parse_qwen_tools, processor_messages
 from painter_rl.training import validate_config
 
@@ -108,6 +113,44 @@ class RuntimeContracts(unittest.TestCase):
         self.assertEqual(native_eos_ids(tokenizer, 248044), [248044, 248046])
         self.assertEqual(native_eos_ids(tokenizer, [248044, 248046]), [248044, 248046])
         self.assertEqual(native_eos_ids(tokenizer, None), [248046])
+
+    def test_rollout_evidence_preserves_pixels_and_tokens_without_expanded_tensors(self):
+        from PIL import Image
+        picture = io.BytesIO()
+        Image.new("RGB", (8, 8), "black").save(picture, format="PNG")
+        raw = picture.getvalue()
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": "draw"},
+            {"type": "image_url", "image_url": {
+                "url": "data:image/png;base64," + base64.b64encode(raw).decode()}},
+        ]}]
+        values = {"input_ids": torch.tensor([[1, 2, 3]]),
+                  "attention_mask": torch.ones(1, 3, dtype=torch.long),
+                  "pixel_values": torch.randn(1024, 128),
+                  "image_grid_thw": torch.tensor([[1, 2, 2]])}
+        pixels = values["pixel_values"].clone()
+        response, logp = torch.tensor([4, 5]), torch.tensor([-.3, -.7])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for index in (0, 1):
+                save_turn_audit(root, index, messages, values, values, response, logp)
+            record = json.loads((root / "turn_000.json").read_text())
+            self.assertFalse(record["expanded_image_tensors_saved"])
+            self.assertFalse(list(root.glob("*.pt")))
+            self.assertEqual(len(list((root / "observed_images").iterdir())), 1)
+            reference = record["messages"][0]["content"][1]
+            self.assertEqual((root / reference["path"]).read_bytes(), raw)
+            self.assertEqual(reference["sha256"], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(record["inputs"]["input_ids"]["values"], [[1, 2, 3]])
+            self.assertNotIn("values", record["inputs"]["pixel_values"])
+            digest = hashlib.sha256(pixels.view(torch.uint8).numpy().tobytes()).hexdigest()
+            self.assertEqual(record["inputs"]["pixel_values"]["sha256"], digest)
+            self.assertEqual(record["response_token_ids"], response.tolist())
+            self.assertEqual(record["sampled_log_probs"], logp.tolist())
+            self.assertTrue(messages[0]["content"][1]["image_url"]["url"].startswith("data:image/"))
+            torch.testing.assert_close(values["pixel_values"], pixels, rtol=0, atol=0)
+            self.assertLess((root / "turn_000.json").stat().st_size, pixels.numel())
+
     def test_configs_share_fixed_algorithm_contract(self):
         root = Path(__file__).resolve().parents[1]
         for name in ("baseline.json", "smoke.json"):
@@ -120,9 +163,15 @@ class RuntimeContracts(unittest.TestCase):
             optimizer = torch.optim.AdamW(model.parameters())
             model.head(model.model(torch.tensor([[1]])).last_hidden_state).sum().backward()
             optimizer.step()
-            save_checkpoint(destination, model, TinyProcessor(), optimizer, 1, {"fixed": 42})
+            probe = {"inputs": {"input_ids": torch.tensor([[1]])}, "expected": torch.tensor([.2])}
+            save_checkpoint(destination, model, TinyProcessor(), optimizer, 1, {"fixed": 42},
+                            restore_probe=probe)
             self.assertFalse(destination.with_name("step1.partial").exists())
-            self.assertEqual(verify_checkpoint(destination, {"fixed": 42})["update"], 1)
+            manifest = verify_checkpoint(destination, {"fixed": 42})
+            self.assertEqual(manifest["update"], 1)
+            self.assertIn("restore_probe.pt", manifest["files"])
+            saved_probe = torch.load(destination / "restore_probe.pt", weights_only=True)
+            torch.testing.assert_close(saved_probe["expected"], probe["expected"])
             other = TinyModel()
             other.load_state_dict(torch.load(destination / "model/toy.pt", weights_only=True))
             opt2 = torch.optim.AdamW(other.parameters())
@@ -133,6 +182,69 @@ class RuntimeContracts(unittest.TestCase):
             (destination / "model/processor.json").write_text('{"bad": true}')
             with self.assertRaises(ValueError):
                 verify_checkpoint(destination, {"fixed": 42})
+
+    def _three_checkpoints(self, root):
+        model = TinyModel()
+        optimizer = torch.optim.AdamW(model.parameters())
+        for update in (10, 20, 30):
+            save_checkpoint(root / f"update_{update:04d}", model, TinyProcessor(),
+                            optimizer, update, {"fixed": 42})
+
+    def test_retention_keeps_latest_two_and_never_deletes_foreign_or_partial(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self._three_checkpoints(root)
+            (root / "update_0040.partial").mkdir()
+            (root / "update_0040.partial/unfinished").write_text("incomplete")
+            model = TinyModel()
+            save_checkpoint(root / "update_0099", model, TinyProcessor(),
+                            torch.optim.AdamW(model.parameters()), 99, {"foreign": True})
+            (root / "user-note.txt").write_text("keep")
+            result = prune_checkpoints(root, {"fixed": 42}, 2)
+            self.assertEqual(result["retained"], ["update_0020", "update_0030"])
+            self.assertEqual([r["update"] for r in result["removed"]], [10])
+            self.assertFalse((root / "update_0010").exists())
+            self.assertTrue((root / "update_0099").is_dir())
+            self.assertTrue((root / "update_0040.partial/unfinished").is_file())
+            self.assertTrue((root / "user-note.txt").is_file())
+            self.assertEqual(prune_checkpoints(root, {"fixed": 42}, 2)["removed"], [])
+            with self.assertRaises(ValueError):
+                prune_checkpoints(root, {"fixed": 42}, 1)
+
+    def test_corrupt_newest_checkpoint_never_authorizes_retention(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self._three_checkpoints(root)
+            (root / "update_0030/model/processor.json").write_text('{"bad": true}')
+            with self.assertRaises(ValueError):
+                prune_checkpoints(root, {"fixed": 42}, 2)
+            self.assertTrue((root / "update_0010").exists())
+            self.assertTrue((root / "update_0020").exists())
+
+    def test_retention_rejects_untracked_files_in_deletion_candidate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self._three_checkpoints(root)
+            (root / "update_0010/personal.txt").write_text("do not remove")
+            with self.assertRaises(ValueError):
+                prune_checkpoints(root, {"fixed": 42}, 2)
+            self.assertTrue((root / "update_0010/personal.txt").is_file())
+
+    def test_checkpoint_symlink_cannot_escape_retention_root(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder) / "checkpoints"
+            root.mkdir()
+            self._three_checkpoints(root)
+            other = Path(folder) / "not-a-checkpoint"
+            other.mkdir()
+            (other / "preserve.txt").write_text("keep")
+            try:
+                (root / "update_0001").symlink_to(other, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"OS does not allow symlinks: {exc}")
+            prune_checkpoints(root, {"fixed": 42}, 2)
+            self.assertTrue((other / "preserve.txt").exists())
+            self.assertTrue((root / "update_0001").is_symlink())
 
 
 if __name__ == "__main__":

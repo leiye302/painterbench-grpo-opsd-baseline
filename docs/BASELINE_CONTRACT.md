@@ -154,6 +154,16 @@ split must be disclosed separately.
 
 ## End-to-end validation boundary
 
+Storage policy: retain the two latest complete, matching-contract checkpoints.
+Write the new checkpoint atomically and verify both retained file sets and
+SHA-256 hashes before deleting an older same-run save. Preserve all rollout
+images, text/tool traces, token IDs, sampled probabilities, metrics and
+evaluations. Do not permanently serialize the expanded image-input tensors for
+every turn; the exact tensors remain in memory through that update. Store
+lossless observed PNGs and processor input hashes instead. A small scoring
+fixture is kept inside each checkpoint and covered by its manifest.
+This changes storage only, not the data seen by the loss or the algorithm.
+
 The pure-loss tests establish grouping, mask and gradient contracts only.
 They do not validate Qwen3.5 multimodal training compatibility, causal token
 alignment, model precision, GPU memory, optimizer state, rollout weight sync,

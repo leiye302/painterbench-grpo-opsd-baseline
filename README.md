@@ -104,9 +104,33 @@ of optimal throughput.
 
 Provide at least **60 GiB free persistent checkpoint storage per saved update**.
 One 4.54B full FP32 model plus Adam states is about 51 GiB. Default saves at
-10/20/30/40/50 retain **all five**; budget roughly **300 GiB plus model/assets and
-rollout records**. The program never automatically deletes old checkpoints.
-Do not use `/dev/shm` for a durable training run.
+10/20/30/40/50 keep **the latest two complete checkpoints** (`keep_last_checkpoints=2`).
+At the end these are updates 40 and 50. A new save is written atomically and
+both retained saves pass full SHA checks **before** an older same-contract
+checkpoint is removed. Partial, foreign-contract and unrelated files are never
+automatically removed. Every retention operation is recorded in the run logs.
+
+The two-checkpoint steady state is about **102 GiB**, but saving the next one
+temporarily needs room for **three**, about **153 GiB**. Budget **250–300 GiB
+total persistent storage** for a clean installation, raw rollout evidence,
+checkpoint write headroom and margin; actual records depend on trajectory
+length. Do not use `/dev/shm` for a durable training run.
+
+Expanded image-input tensors are **not** permanently duplicated to disk.
+Training uses the exact `Turn` tensors kept in memory for the current update.
+The durable audit trail contains lossless observed PNGs (deduplicated within
+each trajectory), prompts/tool history, response token IDs, sampled log
+probabilities, non-image processor inputs and image-tensor shapes/hashes.
+There is no per-turn `turn_*.pt` cache to accumulate across 50 updates.
+Each retained checkpoint additionally contains one small, hash-covered scoring
+fixture for the fresh-process restoration test. No loss, sampling, image
+resolution or training precision changes are made by this storage policy.
+The storage change passed 21 Linux CPU tests, including corrupted-checkpoint
+and symlink retention cases. Replaying two recorded two-turn native rollouts
+with the real Qwen processor reproduced all Student/Teacher input pixels and
+token IDs exactly. Their input audit artifacts shrank from 75,148,740 to
+1,147,363 bytes. This is a measured short-replay saving, not a fixed compression
+ratio promised for every future trajectory.
 
 ```bash
 git clone https://github.com/leiye302/painterbench-grpo-opsd-baseline.git
@@ -188,6 +212,10 @@ Keep code, full configuration, base hashes, environment and skill unchanged.
 Do not rename a checkpoint to a later update. Partial directories are never
 resumed. A crash during rollout repeats that update from the previous complete
 checkpoint and its recorded seed; failed-attempt evidence remains separate.
+Use one of the two checkpoints still present when resuming; update 20 in the
+example will have been pruned after update 40 is safely saved. Previously
+published runs use a different storage/configuration contract and are not
+silently resumed under this version.
 
 Standalone evaluation of the base and the trained checkpoint on the **same**
 held-out tasks, seeds and budgets (use a fresh output directory for each):

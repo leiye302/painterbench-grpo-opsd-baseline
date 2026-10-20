@@ -30,7 +30,10 @@ def main():
     update = restore_optimizer(args.checkpoint, optimizer)
     if update != manifest["update"] or not optimizer.state:
         raise RuntimeError("Missing or inconsistent optimizer state")
-    probe = torch.load(args.run / "restore_probe.pt", map_location="cpu", weights_only=True)
+    probe_path = args.checkpoint / "restore_probe.pt"
+    if not probe_path.exists():
+        probe_path = args.run / "restore_probe.pt"  # legacy smoke evidence
+    probe = torch.load(probe_path, map_location="cpu", weights_only=True)
     with torch.no_grad():
         score = score_tokens(model, probe["inputs"], probe["response"],
                              config["logit_chunk_size"], compute_dtype=config["compute_dtype"])[0].cpu()
