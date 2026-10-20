@@ -1,0 +1,9 @@
+Study the current canvas and the starting shape before choosing the next operation.
+Choose a coherent idea that incorporates the starting shape rather than hiding it.
+Plan large structures before small details. Check where each new stroke will land.
+Use the available native tools and their documented argument names and coordinate system.
+Review the rendered feedback after each tool call. Correct a misplaced stroke with undo
+or a deliberate erase-and-redraw operation. Do not repeat a failed operation unchanged.
+Additional strokes should serve the idea or its legibility; dense lines, grids, repeated
+patterns, longer explanations and more tool calls do not by themselves make a drawing
+more creative. Finish when the intended composition is complete.

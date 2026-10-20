@@ -10,6 +10,13 @@ PUBLIC_FILES = [
     "painter_rl/__init__.py", "painter_rl/public_losses.py",
     "scripts/reward_probe.py", "scripts/visualize_probe.py",
     "scripts/check_release.py", "tests/test_public_losses.py",
+    "requirements-runtime.txt", "docs/RELATED_GRPO.md",
+    "painter_rl/actor.py", "painter_rl/checkpoints.py", "painter_rl/environment.py",
+    "painter_rl/rewards.py", "painter_rl/training.py", "painter_rl/upstream.py",
+    "scripts/train.py", "scripts/prepare.py", "scripts/evaluate.py",
+    "scripts/validate_reward.py", "scripts/verify_restore.py",
+    "configs/baseline.json", "configs/smoke.json", "configs/static_drawing_skill.txt",
+    "tests/test_runtime.py",
 ]
 PATTERNS = [
     re.compile(r"(?:sk|oc_sk|ghp|gho|github_pat)[_-][A-Za-z0-9_-]{16,}"),

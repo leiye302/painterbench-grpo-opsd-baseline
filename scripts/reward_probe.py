@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,10 +42,19 @@ def download(url, path, expected=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         tmp = path.with_suffix(path.suffix + ".partial")
-        with urllib.request.urlopen(url, timeout=120) as response, tmp.open("wb") as out:
-            while chunk := response.read(8 * 1024**2):
-                out.write(chunk)
-        os.replace(tmp, path)
+        for attempt in range(6):
+            try:
+                with urllib.request.urlopen(url, timeout=40) as response, tmp.open("wb") as out:
+                    while chunk := response.read(8 * 1024**2):
+                        out.write(chunk)
+                if expected and sha256(tmp) != expected:
+                    raise ValueError(f"Downloaded asset SHA mismatch: {path.name}")
+                os.replace(tmp, path)
+                break
+            except (OSError, urllib.error.URLError) as exc:
+                if (isinstance(exc, urllib.error.HTTPError) and exc.code in (401, 403, 404)) or attempt == 5:
+                    raise
+                time.sleep(min(2 ** attempt, 16))
     actual = sha256(path)
     if expected and actual != expected:
         raise RuntimeError(f"Public asset SHA mismatch: {path.name}")

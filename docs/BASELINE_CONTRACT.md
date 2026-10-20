@@ -96,8 +96,8 @@ baseline's coefficients:
 $$
 \mathcal L =
 \mathcal L_{\rm GRPO}
-0.01\mathcal L_{\rm SDAR}
-0.01\mathcal L_{\rm ref}
++0.01\mathcal L_{\rm SDAR}
++0.01\mathcal L_{\rm ref}
 -0.001\mathcal H.
 $$
 
@@ -116,7 +116,13 @@ failure. A capped rollout still has a last canvas and must not disappear from
 the denominator. Retry infrastructure failures only; do not resample bad model
 outputs until they become valid.
 
-## Reward: not yet approved
+The sampler stops at the tokenizer's native chat EOS (`<|im_end|>`) as well as
+any model EOS. A missing optional `generation_config.json` must not allow it to
+invent subsequent user/tool turns. Do not stop at the first tool-call closing
+tag: the native executor handles all complete calls in a response and executes
+finish last, matching the upstream dispatch semantics.
+
+## Reward: passive validation passed; optimization robustness is not proven
 
 The candidate terminal reward is the released **ViDrA-adapted** prediction on
 the final canvas, including the last canvas of a capped rollout. Do not sum
@@ -132,6 +138,10 @@ correctness. Run `scripts/reward_probe.py` on actual rollouts and inspect the
 derived images before accepting it. Synthetic added-line controls test
 shortcut sensitivity; they are not human ratings. Do not change the reward
 or task definition based solely on a score increase without inspecting images.
+
+The complete 480-image released human-rated test split has been re-scored with
+the actual head and DINO weights. Correlations agree with the official report.
+See [the numerical results and source comparison](RELATED_GRPO.md).
 
 Report out-of-range predictions and failure cases. Do not silently clip them or
 drop samples. Lock all scorer and feature-extractor hashes between experimental

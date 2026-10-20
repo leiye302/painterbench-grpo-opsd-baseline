@@ -5,6 +5,14 @@ __pycache__/
 .pytest_cache/
 work/
 outputs/
+runs/
+models/
+checkpoints/
+*.safetensors
+*.pt
+*.pth
+*.joblib
+*.dpapi
 *.partial
 .env
 .env.*

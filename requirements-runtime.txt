@@ -1,0 +1,15 @@
+# Install the tested CUDA torch/torchvision pair separately; see README.
+# Python 3.12. No API credentials or external inference service are required.
+transformers==5.19.0
+tokenizers==0.23.3
+huggingface-hub==1.33.0
+safetensors==0.8.0
+numpy==2.3.5
+scipy==1.18.1
+scikit-learn==1.8.0
+joblib==1.6.0
+Pillow==13.0.0
+omegaconf==2.4.0
+pydantic==2.14.1
+PyYAML==6.0.3
+litellm==1.106.0
